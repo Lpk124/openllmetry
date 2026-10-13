@@ -541,8 +541,10 @@ def _wrap(
     kwargs,
 ):
     """Instruments and calls every function defined in TO_WRAP."""
-    if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY) or context_api.get_value(
-        SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY
+    if (
+        not to_wrap.get("wrapper_state", {}).get("active", True)
+        or context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY)
+        or context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY)
     ):
         return wrapped(*args, **kwargs)
 
@@ -674,8 +676,10 @@ async def _awrap(
     kwargs,
 ):
     """Instruments and calls every function defined in TO_WRAP."""
-    if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY) or context_api.get_value(
-        SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY
+    if (
+        not to_wrap.get("wrapper_state", {}).get("active", True)
+        or context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY)
+        or context_api.get_value(SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY)
     ):
         return await wrapped(*args, **kwargs)
 
@@ -834,6 +838,10 @@ class AnthropicInstrumentor(BaseInstrumentor):
         return _instruments
 
     def _instrument(self, **kwargs):
+        # Cached SDK response accessors can retain a bound wrapper after unwrap().
+        # Give each instrumentation run its own state so old wrappers stay disabled
+        # even if instrumentation is enabled again later.
+        self._wrapper_state = {"active": True}
         tracer_provider = kwargs.get("tracer_provider")
         tracer = get_tracer(__name__, __version__, tracer_provider)
 
@@ -881,7 +889,7 @@ class AnthropicInstrumentor(BaseInstrumentor):
                         duration_histogram,
                         exception_counter,
                         event_logger,
-                        wrapped_method,
+                        {**wrapped_method, "wrapper_state": self._wrapper_state},
                     ),
                 )
                 logger.debug(
@@ -908,13 +916,14 @@ class AnthropicInstrumentor(BaseInstrumentor):
                         duration_histogram,
                         exception_counter,
                         event_logger,
-                        wrapped_method,
+                        {**wrapped_method, "wrapper_state": self._wrapper_state},
                     ),
                 )
             except Exception:
                 pass  # that's ok, we don't want to fail if some methods do not exist
 
     def _uninstrument(self, **kwargs):
+        self._wrapper_state["active"] = False
         for wrapped_method in WRAPPED_METHODS:
             wrap_package = wrapped_method.get("package")
             wrap_object = wrapped_method.get("object")
